@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>经典HTML结构示例</title>
+    <meta name="description" content="这是一个展示经典HTML5页面结构的示例模板。">
+    <meta name="keywords" content="HTML, 经典结构, 模板, 示例">
+    <!-- 引入外部CSS文件 -->
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        /* 内部CSS样式 */
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        header, nav, main, aside, footer {
+            margin-bottom: 20px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        nav ul {
+            list-style-type: none;
+            padding: 0;
+            display: flex;
+            gap: 15px;
+        }
+        nav a {
+            text-decoration: none;
+            color: #0066cc;
+        }
+        .container {
+            display: flex;
+            gap: 20px;
+        }
+        main {
+            flex: 3;
+        }
+        aside {
+            flex: 1;
+            background-color: #f5f5f5;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 页面头部 -->
+    <header>
+        <h1>网站名称/Logo</h1>
+        <p>一个经典的HTML5页面结构示例</p>
+    </header>
+
+    <!-- 导航栏 -->
+    <nav>
+        <ul>
+            <li><a href="#">首页</a></li>
+            <li><a href="#">关于</a></li>
+            <li><a href="#">服务</a></li>
+            <li><a href="#">产品</a></li>
+            <li><a href="#">联系</a></li>
+        </ul>
+    </nav>
+
+    <!-- 主要内容区域 -->
+    <main>
+        <article>
+            <h2>文章标题</h2>
+            <p>这是文章的正文内容。一个经典的页面通常会有一个主要的文章区域，用于展示核心信息。</p>
+            <p>HTML5 引入了像 <code>&lt;article&gt;</code>、<code>&lt;section&gt;</code> 这样的语义化标签，让页面结构更清晰，对搜索引擎和无障碍访问更友好。</p>
+        </article>
+
+        <section>
+            <h2>相关链接</h2>
+            <ul>
+                <li><a href="#">链接一</a></li>
+                <li><a href="#">链接二</a></li>
+                <li><a href="#">链接三</a></li>
+            </ul>
+        </section>
+    </main>
+
+    <!-- 侧边栏 -->
+    <aside>
+        <h2>侧边栏</h2>
+        <p>这里是侧边栏内容，可以放置广告、分类、搜索框等辅助信息。</p>
+    </aside>
+
+    <!-- 页面底部 -->
+    <footer>
+        <p>&copy; 2026 经典HTML结构示例. 保留所有权利。</p>
+        <p>Designed with ❤️</p>
+    </footer>
+
+    <!-- 引入外部JavaScript文件 -->
+    <script src="scripts.js"></script>
+    <script>
+        // 内部JavaScript代码
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('页面已加载，经典结构准备就绪！');
+            // 这里可以添加你的交互逻辑
+        });
+    </script>
+
+</body>
+</html>

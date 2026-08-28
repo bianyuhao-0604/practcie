@@ -1,0 +1,52 @@
+fruits=["苹果","香蕉","橘子","西瓜"]
+numbers=[1,2,3,4,5]
+mixed_list=['你好',True,100,3.14]
+#创建列表
+print("初始列表:")
+print("fruits列表",fruits)
+print("numbers列表",numbers)
+print("mixed_list列表",mixed_list)
+#打印列表
+print("访问列表元素:")
+print("访问fruits中第一个元素:",fruits[0])
+print("访问numbers中第二个元素:",numbers[1])
+print("访问mixed_list中倒数第一个元素:",mixed_list[-1])
+print("-"*20)
+#访问
+print("访问列表切片:")
+print("fruits前两个元素",fruits[0:2])
+print("fruits最后三个元素",fruits[-3:])
+print("numbes中的奇数",numbers[::2])
+print("-"*20)
+#切片
+print("开始切片")
+fruits[0]="芒果"
+print(fruits)
+fruits.append("哈密瓜")
+print(fruits)
+fruits.insert(1,"水蜜桃")
+print(fruits)
+print("-"*20)
+#修改列表
+print("删除列表中元素:")
+popped_fruit=fruits.pop()
+print("被删除的元素:",popped_fruit)
+print("删除后的列表:",fruits)
+fruits.remove("橘子")
+print("移除橘子后的列表:",fruits)
+del fruits[-1]
+print("移除最后一项后的列表:",fruits)
+print("-"*20)
+#删除列表
+print("fruirs列表的长度:",len(fruits))
+print("numbers列表中最大值:",max(numbers))
+print("numbers列表中最小值:",min(numbers))
+print("numbers列表中数字和:",sum(numbers))
+print("-"*20)
+#列表中的常用方法
+print("遍历fruits列表:")
+for fruit in fruits:
+    print(fruit)
+#遍历列表
+for num in numbers:
+    print(f"数字:{num},平方:{num**2}")

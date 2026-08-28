@@ -1,0 +1,7 @@
+{
+  "dataset": "SHS27k",
+  "model": "facebook/esm2_t33_650M_UR50D",
+  "embed_dim": 1280,
+  "num_proteins": 1552,
+  "max_seq_length": 1024
+}

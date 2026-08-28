@@ -1,0 +1,39 @@
+paths:
+  raw_dir: "data/raw"
+  pretrain_dir: "data/pretrain"
+  benchmark_dir: "data/benchmark"
+  embeddings_dir: "data/embeddings"
+  checkpoint_dir: "checkpoints"
+  log_dir: "logs"
+
+model:
+  d_model: 1280       # ESM2-650M 输出维度
+  d_prompt: 64        # 提示图内部维度
+  d_gpt: 64           # GNNgpt 隐藏维度
+  d_gin: 64           # GNNpre/GIN 隐藏维度
+  gpt_layers: 2
+  gin_layers: 2
+  K: 4                # 候选 L3 路径数
+  temp: 0.5    # Gumbel-Softmax 温度
+  gamma: 2.0          # LPN 正则化系数
+
+training:
+  seed: 42
+  device: "auto"      # auto / cpu / cuda
+  
+  gnn_pre:
+    epochs: 50
+    lr: 1.0e-3
+    batch_size: 256
+    patience: 10
+    
+  l3ppi:
+    phase1_epochs: 20
+    phase2_epochs: 80
+    lr: 1.0e-3
+    batch_size: 128
+    patience: 15
+
+dataset:
+  name: "SHS27k"      # SHS27k / SHS148k
+  split: "BFS"        # BFS / DFS

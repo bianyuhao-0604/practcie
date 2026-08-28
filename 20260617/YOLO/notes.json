@@ -1,0 +1,21 @@
+{
+  "categories": [
+    {
+      "id": 0,
+      "name": "eye"
+    },
+    {
+      "id": 1,
+      "name": "mouth"
+    },
+    {
+      "id": 2,
+      "name": "nose"
+    }
+  ],
+  "info": {
+    "year": 2026,
+    "version": "1.0",
+    "contributor": "Label Studio"
+  }
+}

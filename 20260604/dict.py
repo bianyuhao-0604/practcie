@@ -1,0 +1,40 @@
+#create new dit
+student={
+    "name":"张三",
+    "age":18,
+    "grade":"高三",
+    "scores":{"语文":85,"数学":92,"英语":95}
+}
+empty_dict={}
+
+print("初始字典:")
+print("学生",student)
+print("空字典",empty_dict)
+print("-"*30)
+#访问字典元素
+print('姓名:',student['name'])
+print('年龄:',student['age'])
+print("-"*30)
+print('学生班级:',student.get('class'))
+print('学生班级:',student.get('class','未知班级'))
+#修改和添加元素
+print('修改和添加元素:')
+student['age']=19
+print('修改年龄后的字典:',student)
+student['gender']='男'
+print('增加性别后的字典:',student)
+print("-"*30)
+#删除元素
+remove_age=student.pop('age')
+print('被删除的键',remove_age)
+print('删除后字典',student)
+del student['name']
+print('移除名字后的字典',student)
+student.clear()
+print('空字典:',student)
+print("-"*30)
+#常用方法
+student={'name':'zhangsan','age':'20','grade':'大一'}
+print('键',student.keys())
+print('值',student.values())
+print('字典中的键值对',student.items())
