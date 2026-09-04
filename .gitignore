@@ -165,7 +165,10 @@ torch_final/Lib/site-packages/torch/lib/torch_cuda.dll
 *.hdf5
 *.parquet
 *.feather
-
+*.pdb
+*.png
+*.pdf
+*.jpg
 # 整个 raw 数据目录
 data/raw/
 l3_ppi/data/raw/
