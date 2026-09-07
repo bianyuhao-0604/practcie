@@ -1,0 +1,16 @@
+{
+  "Classic AE": {
+    "params": 6887040,
+    "test_mse": 0.0094,
+    "test_psnr": 20.83,
+    "psnr_shift4": 19.71,
+    "psnr_drop": 1.12
+  },
+  "CNN AE": {
+    "params": 712835,
+    "test_mse": 0.0071,
+    "test_psnr": 22.08,
+    "psnr_shift4": 20.96,
+    "psnr_drop": 1.12
+  }
+}

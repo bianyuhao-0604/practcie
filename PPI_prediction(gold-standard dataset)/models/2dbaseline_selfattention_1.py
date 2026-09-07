@@ -2,15 +2,18 @@
 """
 ========================================================================
  2d-Selfattention —— Reim et al., Bioinformatics 2025 (btaf192) 复现
- 完整版适配：
-   · 训练/验证/测试集的正、负样本各存于单独文件
-   · split 文件兼容：无表头 / 完整表头 / 半表头（列名自动按内容识别）
-   · 所有蛋白的 per-token 嵌入存于【一个】大 h5 文件（顶层 key = 蛋白名）
-   · 每 epoch 随机抽取训练集 50%（正负分层抽样，保持 1:1 平衡）
+ 本版整合：
+   · Fix A   梯度裁剪 + 逐 epoch 诊断 + [MEM] 内存监控
+   · Fix B   conv 后 InstanceNorm（train/eval 行为一致）
+   · Fix B+  top-1% 均值读出（替代全局 max，梯度通路 ×100，无新参数）
+   · Fix M   禁用 per-token 嵌入缓存（修复 OOM 与合并版首次调用崩溃）
+   · 早停指标 = AUPR | PATIENCE=20 | checkpoint 备份 + 续训
 ========================================================================
 """
 import re
+import gc
 import random
+import shutil
 from pathlib import Path
 
 import h5py
@@ -23,15 +26,19 @@ import torch.nn.utils.spectral_norm as spectral_norm
 from sklearn.metrics import (accuracy_score, precision_score, recall_score,
                              f1_score, average_precision_score)
 
+try:                                    # ★ 内存监控（未装 psutil 则跳过打印）
+    import psutil
+    _PS = psutil.Process()
+except ImportError:
+    _PS = None
+
 # ============================================================
-# 0. 配置 —— ★ 请按实际情况核对下面所有路径 ★
+# 0. 配置
 # ============================================================
 BASE_DIR = Path(r"D:/pythonprojects/practice-github/PPI_prediction(gold-standard dataset)")
 
-# ---- 单个大 h5 嵌入文件（顶层 key = 蛋白名）----
-EMB_H5 = BASE_DIR / "Embeddings" / "embeddings_per_tok.h5"
+EMB_H5  = BASE_DIR / "Embeddings" / "embeddings_per_tok.h5"
 
-# ---- 六个 split 文件（正/负各一个）----
 TRAIN_POS = BASE_DIR / "dataset" / "Intra1_pos_rr.txt"
 TRAIN_NEG = BASE_DIR / "dataset" / "Intra1_neg_rr.txt"
 VAL_POS   = BASE_DIR / "dataset" / "Intra0_pos_rr.txt"
@@ -40,21 +47,23 @@ TEST_POS  = BASE_DIR / "dataset" / "Intra2_pos_rr.txt"
 TEST_NEG  = BASE_DIR / "dataset" / "Intra2_neg_rr.txt"
 
 # ---- 模型超参数（论文 2d-Selfattention 设置）----
-EMBED_DIM   = 1280    # ESM-2 t33 per-token 维度
-H3          = 64      # 降维终点 / 外积特征通道数
+EMBED_DIM   = 1280
+H3          = 64
 NUM_HEADS   = 8
 FF_DIM      = 256
 DROPOUT     = 0.2
-POOLING     = 'max'   # 论文 3.3 节: 2d-Selfattention 偏好 max pooling
+POOLING     = 'max'
 KERNEL_SIZE = 2
 
 # ---- 训练超参数 ----
-LR          = 1e-5    # 注意力模型对学习率极敏感（论文 3.1 节），先用小值
-BATCH_SIZE  = 16      # 整批保留反向图，OOM 时调小
+LR          = 1e-4    # ★ 从 1e-5 调回 1e-4：B+ 需要把 InstanceNorm 的 β 移动约 2 个单位
+                      #   重新居中，Adam 每 step 位移 ≈ lr —— 1e-5 要约 80 epoch，1e-4 约 8 epoch。
+                      #   摆动风险由梯度裁剪兜底。
+BATCH_SIZE  = 16
 MAX_EPOCHS  = 60
-PATIENCE    = 8       # 早停耐心值
-SUBSET_FRAC = 0.5     # 每 epoch 抽 50% 训练样本（正负分层）
-MAX_LEN     = 1000    # 剔除 >1000 aa（按 h5 中的实际嵌入长度过滤）
+PATIENCE    = 20      # ★ aupr 爬升慢，8 太紧（上次 epoch 26 就是被 8 错杀的）
+SUBSET_FRAC = 0.5
+MAX_LEN     = 1000
 SEED        = 42
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -69,14 +78,16 @@ def set_seed(seed=SEED):
 
 
 # ============================================================
-# 1. 嵌入读取 —— 单个大 h5，启动时打开一次句柄常驻复用
+# 1. 嵌入读取
 # ============================================================
 _H5_HANDLE = None
 _KEYSET    = None
-_KEYMAP    = {}            # 常见变体名 -> h5 实际 key（处理 isoform 后缀等）
-_EMB_CACHE = {}             # 蛋白嵌入内存缓存（FIFO）
-_CACHE_MAX = 8000
-_LEN_CACHE = {}             # 蛋白长度缓存（只读 shape，开销极小）
+_KEYMAP    = {}
+_EMB_CACHE = {}            # per-token 嵌入缓存（默认禁用）
+_CACHE_MAX = 0             # ★ 0 = 禁用。8000 条 × ~2MB ≈ 16GB，正是上次 OOM 的元凶；
+                           #   热点蛋白的重复读取交给操作系统页缓存。若 epoch 明显变慢，
+                           #   折中可设 500（约 1GB），绝不要回到 8000。
+_LEN_CACHE = {}
 
 
 def open_h5():
@@ -110,7 +121,6 @@ def resolve_key(name: str):
 
 
 def protein_len(name: str):
-    """返回蛋白的 token 数；只读 shape，不读嵌入数据"""
     if name in _LEN_CACHE:
         return _LEN_CACHE[name]
     f = open_h5()
@@ -121,14 +131,14 @@ def protein_len(name: str):
     obj = f[k]
     if isinstance(obj, h5py.Group):
         obj = obj[list(obj.keys())[0]]
-    L = obj.shape[-2]                      # 兼容 (L,D) 与 (1,L,D)
+    L = obj.shape[-2]
     _LEN_CACHE[name] = int(L)
     return _LEN_CACHE[name]
 
 
 def get_embedding_per_tok(name: str, layer: int = -1) -> torch.Tensor:
     """读取单蛋白 per-token 嵌入，返回 (L, 1280) 张量"""
-    if name in _EMB_CACHE:
+    if _CACHE_MAX > 0 and name in _EMB_CACHE:          # ★ 缓存禁用时直接读
         return _EMB_CACHE[name]
 
     f = open_h5()
@@ -145,20 +155,20 @@ def get_embedding_per_tok(name: str, layer: int = -1) -> torch.Tensor:
     else:
         emb = obj[()]
 
-    t = torch.tensor(np.asarray(emb), dtype=torch.float32)
+    t = torch.from_numpy(np.array(emb, dtype=np.float32))   # ★ 免二次复制的写法
     if t.ndim == 3 and t.shape[0] == 1:
         t = t.squeeze(0)
 
-    if len(_EMB_CACHE) >= _CACHE_MAX:
-        _EMB_CACHE.pop(next(iter(_EMB_CACHE)))
-    _EMB_CACHE[name] = t
+    if _CACHE_MAX > 0:                                       # ★ 修复：缓存写入加保护
+        if len(_EMB_CACHE) >= _CACHE_MAX:                    #   （合并版此处未加保护，
+            _EMB_CACHE.pop(next(iter(_EMB_CACHE)))           #    _CACHE_MAX=0 时首次调用
+        _EMB_CACHE[name] = t                                 #    即抛 StopIteration）
     return t
 
 
 # ============================================================
-# 2. 数据加载 —— 按内容自动识别列，兼容各种表头情况
+# 2. 数据加载（原样保留，已在你的数据上验证可用）
 # ============================================================
-# UniProt / Ensembl 风格 ID 正则（用于判断某单元格是否像蛋白 ID）
 _ID_RE = re.compile(
     r"^[OPQ][0-9][A-Z0-9]{3}[0-9](-\d+)?$"
     r"|^[A-NR-Z][0-9]([A-Z][A-Z0-9]{2}[0-9]){1,2}(-\d+)?$"
@@ -173,7 +183,6 @@ _BINARY = {"0", "1", "0.0", "1.0", "true", "false", "pos", "neg",
 
 
 def _label_to_float(v, default_label):
-    """字符串/数值标签统一转 0.0/1.0；无法解析时回退到文件默认标签"""
     s = str(v).strip().lower()
     if s in ("1", "true", "pos", "positive", "yes"):  return 1.0
     if s in ("0", "false", "neg", "negative", "no"):  return 0.0
@@ -181,7 +190,6 @@ def _label_to_float(v, default_label):
 
 
 def _find_binary_col(df_body: pd.DataFrame):
-    """按内容找标签列：0/1 类取值占比最高的列（≥0.8 才认定）"""
     best_col, best_frac = None, 0.0
     for j in range(df_body.shape[1]):
         col = df_body.iloc[:, j].astype(str).str.strip().str.lower()
@@ -192,14 +200,6 @@ def _find_binary_col(df_body: pd.DataFrame):
 
 
 def _read_one_file(path: Path, default_label: float) -> pd.DataFrame:
-    """
-    ★ 核心修正：不依赖表头，按内容识别列。
-      - 先用 header=None 读入（自动尝试 制表符/逗号/空格/分号）
-      - 若首行含表头关键词 → 视为表头行确定列位置；
-        但若首行同时还像蛋白 ID（你的文件情况），该行也保留为数据
-      - 否则按内容找 0/1 占比最高的列作为标签列，其余前两列作为 name1/name2
-      - 无标签列时（如 2 列负样本文件），整列用 default_label 填充
-    """
     df = None
     for sep in (None, "\t", ",", r"\s+", ";"):
         try:
@@ -224,15 +224,12 @@ def _read_one_file(path: Path, default_label: float) -> pd.DataFrame:
 
     first_row_is_data = False
     if row0_label_col is not None or row0_kw_hits >= 2:
-        # 首行是（至少部分）表头
         label_col = row0_label_col
         if label_col is None:
             label_col = _find_binary_col(df.iloc[1:])
-        # 你的文件情况：表头行里混着真实蛋白 ID → 该行同时保留为数据
         first_row_is_data = row0_id_hits > 0
         data = df if first_row_is_data else df.iloc[1:]
     else:
-        # 首行是数据行（无表头文件）
         first_row_is_data = True
         data = df
         label_col = _find_binary_col(data) if ncols >= 3 else None
@@ -263,11 +260,10 @@ def _read_one_file(path: Path, default_label: float) -> pd.DataFrame:
 
 
 def load_split(pos_path: Path, neg_path: Path) -> pd.DataFrame:
-    """正负两文件 → 赋 1/0 → 合并 → 全局打乱 → 剔除 >1000 aa（按 h5 实际长度）"""
     df_pos = _read_one_file(pos_path, default_label=1.0)
     df_neg = _read_one_file(neg_path, default_label=0.0)
     df = pd.concat([df_pos, df_neg], ignore_index=True)
-    df = df.sample(frac=1.0, random_state=SEED).reset_index(drop=True)   # 必须打乱
+    df = df.sample(frac=1.0, random_state=SEED).reset_index(drop=True)
 
     open_h5()
     keep, missing_prots = [], set()
@@ -306,7 +302,6 @@ class Split:
 
 
 def stratified_subset(ds: Split, frac: float = SUBSET_FRAC):
-    """★ 正、负样本各抽 frac 比例，保证每个 epoch 的子集严格 1:1 平衡"""
     pos_idx = [i for i, y in enumerate(ds.interaction) if y == 1.0]
     neg_idx = [i for i, y in enumerate(ds.interaction) if y == 0.0]
     k_pos = max(1, int(frac * len(pos_idx)))
@@ -317,10 +312,9 @@ def stratified_subset(ds: Split, frac: float = SUBSET_FRAC):
 
 
 # ============================================================
-# 3. 模型 —— 与仓库 models/attention.py 逐行对应
+# 3. 模型
 # ============================================================
 class Attention(nn.Module):
-    """多头注意力（Q/K/V/输出投影全部谱归一化）"""
     def __init__(self, hid_dim, n_heads, dropout):
         super().__init__()
         self.hid_dim, self.n_heads = hid_dim, n_heads
@@ -365,7 +359,6 @@ class Feedforward(nn.Module):
 
 
 class EncoderLayer(nn.Module):
-    """自注意力编码器层（结构与原实现一致）"""
     def __init__(self, hid_dim, n_heads, ff_dim, dropout, activation_fn="swish"):
         super().__init__()
         self.ln1, self.ln2 = nn.LayerNorm(hid_dim), nn.LayerNorm(hid_dim)
@@ -380,7 +373,7 @@ class EncoderLayer(nn.Module):
 
 
 class SelfAttInteraction(nn.Module):
-    """★ 论文中的 2d-Selfattention 模型 ★（= 2d-baseline + 自注意力编码器）"""
+    """★ 论文中的 2d-Selfattention 模型 ★"""
     def __init__(self, embed_dim, num_heads, h3=64, dropout=0.2,
                  ff_dim=256, pooling='avg', kernel_size=2):
         super().__init__()
@@ -388,8 +381,9 @@ class SelfAttInteraction(nn.Module):
         h2 = int(h // 4)
 
         self.encoder = EncoderLayer(h3, num_heads, ff_dim, dropout)
-        self.multihead = Attention(h3, num_heads, dropout)   # 原实现冗余定义，保留对齐
+        self.multihead = Attention(h3, num_heads, dropout)
         self.conv = nn.Conv2d(h3, 1, kernel_size=kernel_size, padding='same')
+        self.map_norm = nn.InstanceNorm2d(1, affine=True)   # Fix B
         if pooling == 'max':
             self.pool = nn.MaxPool2d(kernel_size=kernel_size)
         elif pooling == 'avg':
@@ -398,9 +392,9 @@ class SelfAttInteraction(nn.Module):
             raise ValueError("pooling must be 'max' or 'avg'")
 
         self.ReLU = nn.ReLU()
-        self.fc1 = nn.Linear(embed_dim, h)   # 1280 -> 320
-        self.fc2 = nn.Linear(h, h2)          #  320 -> 80
-        self.fc3 = nn.Linear(h2, h3)         #   80 -> 64
+        self.fc1 = nn.Linear(embed_dim, h)
+        self.fc2 = nn.Linear(h, h2)
+        self.fc3 = nn.Linear(h2, h3)
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, protein1, protein2, mask1=None, mask2=None):
@@ -415,14 +409,18 @@ class SelfAttInteraction(nn.Module):
         mat = torch.einsum('bik,bjk->bijk', x1, x2)   # (1, L1, L2, 64)
         mat = mat.permute(0, 3, 1, 2)                 # (1, 64, L1, L2)
         mat = self.conv(mat)                          # (1, 1, L1, L2)
+        mat = self.map_norm(mat)                      # Fix B
         x = self.pool(mat)
-        m = torch.max(x)
+        # ---- ★ Fix B+：top-1% 均值读出（无新参数，与旧 checkpoint 兼容）----
+        flat = x.flatten()
+        k = max(1, int(0.01 * flat.numel()))
+        m = torch.topk(flat, k).values.mean()
         pred = self.sigmoid(m)[None]
         return pred, mat
 
 
 def batch_iterate(model, batch, device):
-    """逐样本前向（变长不 padding），整批一次反向 —— 与论文协议一致"""
+    """逐样本前向（变长不 padding），整批一次反向"""
     preds = []
     for i in range(len(batch["interaction"])):
         s1 = get_embedding_per_tok(batch["name1"][i]).to(device)
@@ -462,7 +460,6 @@ def main():
     val_ds   = Split(load_split(VAL_POS,   VAL_NEG))
     test_ds  = Split(load_split(TEST_POS,  TEST_NEG))
 
-    # ---- 启动自检：抽样验证嵌入可读性 ----
     probes = list(range(0, min(100, len(train_ds)), 7))
     ok = 0
     for i in probes:
@@ -480,12 +477,23 @@ def main():
     criterion = nn.BCELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
-    best_acc, patience_cnt = 0.0, 0
+    best_aupr, patience_cnt = 0.0, 0
     CKPT.parent.mkdir(parents=True, exist_ok=True)
+
+    # ---- ★ 续训：top-k 读出无新参数，与上一轮最优 checkpoint 完全兼容 ----
+    if CKPT.exists():
+        backup = CKPT.with_name(CKPT.stem + "_maxreadout_backup.pt")   # ★ 用 with_name，
+        shutil.copy(CKPT, backup)                                      #   Path.replace 会真的重命名文件
+        print(f"已备份 max 读出最优权重 → {backup.name}")
+        try:
+            model.load_state_dict(torch.load(CKPT, map_location=DEVICE))
+            print("已加载 checkpoint，以 top-1% 读出续训\n")
+        except RuntimeError as e:
+            print(f"checkpoint 结构不匹配，改为从头训练（{e}）\n")
 
     for epoch in range(1, MAX_EPOCHS + 1):
         model.train()
-        idxs = stratified_subset(train_ds)          # ★ 正负分层抽 50%
+        idxs = stratified_subset(train_ds)
         random.shuffle(idxs)
 
         ep_loss, nb = 0.0, 0
@@ -495,8 +503,8 @@ def main():
             labels = torch.tensor(batch["interaction"],
                                   dtype=torch.float32, device=DEVICE)
             if s == 0:
-                print(f"  [诊断] preds: min={preds.min():.4f} "
-                      f"mean={preds.mean():.4f} max={preds.max():.4f} | "
+                print(f"  [诊断] preds: min={preds.min():.4f} mean={preds.mean():.4f} "
+                      f"max={preds.max():.4f} | ≥0.5占比={(preds >= 0.5).float().mean():.2f} | "
                       f"labels[:8]={labels[:8].tolist()}")
             loss = criterion(preds, labels)
             optimizer.zero_grad()
@@ -505,7 +513,7 @@ def main():
             if s == 0:
                 g = sum(p.grad.abs().sum().item()
                         for p in model.parameters() if p.grad is not None)
-                print(f"  [诊断] 梯度绝对值总和 = {g:.6f}")     
+                print(f"  [诊断] 梯度绝对值总和 = {g:.6f}")
             optimizer.step()
             ep_loss += loss.item(); nb += 1
 
@@ -513,18 +521,28 @@ def main():
         print(f"Epoch {epoch:03d} | loss={ep_loss/nb:.4f} | "
               f"val acc={val['acc']:.3f} f1={val['f1']:.3f} aupr={val['aupr']:.3f}")
 
-        if val["acc"] > best_acc:
-            best_acc, patience_cnt = val["acc"], 0
+        # ---- ★ Fix M 验证：内存应平稳在 2-4 GB，不随 epoch 单调上涨 ----
+        gc.collect()
+        if DEVICE.type == "cuda":
+            torch.cuda.empty_cache()
+        if _PS is not None:
+            print(f"  [MEM] 进程内存 {_PS.memory_info().rss/1024**3:.2f} GB")
+
+        if val["aupr"] > best_aupr:
+            best_aupr, patience_cnt = val["aupr"], 0
             torch.save(model.state_dict(), CKPT)
         else:
             patience_cnt += 1
             if patience_cnt >= PATIENCE:
-                print(f"早停：验证准确率 {PATIENCE} 个 epoch 无提升，最优 acc={best_acc:.3f}")
+                print(f"早停：验证AUPR {PATIENCE} 个 epoch 无改善，最优 aupr={best_aupr:.3f}")  # ★
                 break
 
-    model.load_state_dict(torch.load(CKPT, map_location=DEVICE))
+    if CKPT.exists():                                   # ★ 兜底：未保存过也不崩
+        model.load_state_dict(torch.load(CKPT, map_location=DEVICE))
+    else:
+        print("⚠ 训练中未保存任何 checkpoint，用最后一个 epoch 的权重测试")
     test = evaluate(model, test_ds)
-    print("\n===== Test (2d-Selfattention) =====")
+    print("\n===== Test (2d-Selfattention, top-1% readout) =====")
     for k, v in test.items():
         print(f"{k:>10s}: {v:.3f}")
 

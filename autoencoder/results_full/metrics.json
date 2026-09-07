@@ -1,0 +1,50 @@
+{
+  "Classic AE": {
+    "mse": 0.0094,
+    "psnr": 20.83,
+    "ssim": null,
+    "lpips": null,
+    "params": 6887040,
+    "gmacs": null,
+    "ms_per_img": 0.0818,
+    "probe_acc": 0.3929,
+    "pr": 56.8,
+    "effective_dims": 68,
+    "per_class_psnr": [
+      21.66,
+      19.28,
+      21.77,
+      20.72,
+      22.13,
+      20.61,
+      20.92,
+      20.01,
+      21.81,
+      19.41
+    ]
+  },
+  "CNN AE": {
+    "mse": 0.0071,
+    "psnr": 22.08,
+    "ssim": null,
+    "lpips": null,
+    "params": 712835,
+    "gmacs": null,
+    "ms_per_img": 0.1261,
+    "probe_acc": 0.3864,
+    "pr": 71.5,
+    "effective_dims": 76,
+    "per_class_psnr": [
+      23.01,
+      20.41,
+      23.02,
+      22.18,
+      23.23,
+      22.04,
+      21.92,
+      21.26,
+      23.09,
+      20.62
+    ]
+  }
+}
