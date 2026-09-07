@@ -173,3 +173,7 @@ torch_final/Lib/site-packages/torch/lib/torch_cuda.dll
 data/raw/
 l3_ppi/data/raw/
 2026*/data/raw/
+!autoencoder/results_classic/*.png
+!autoencoder/results_compare/*.png
+!autoencoder/results_conv/*.png
+!autoencoder/results_full/*.png
