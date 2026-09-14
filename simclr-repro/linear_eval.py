@@ -10,7 +10,7 @@ from model import SimCLR
 from augmentations import CIFAR_MEAN, CIFAR_STD
 
 
-@torch.no_grad()
+@torch.no_grad()   # 这个函数只提特征，保留装饰器是对的
 def extract_features(model: SimCLR, loader: DataLoader, device: str):
     """抽投影头之前的 h —— 论文 Table 3 显示 h 比下游用 z 好得多。"""
     model.eval()
@@ -22,13 +22,14 @@ def extract_features(model: SimCLR, loader: DataLoader, device: str):
     return torch.cat(feats), torch.cat(labels)
 
 
-@torch.no_grad()
-def linear_eval(model: SimCLR, args, device: str) -> float:
+# 【关键修复】删掉了这里的 @torch.no_grad() —— 分类器训练必须有梯度
+def linear_eval(model: SimCLR, args, device) -> float:
     eval_tf = T.Compose([T.ToTensor(), T.Normalize(CIFAR_MEAN, CIFAR_STD)])
     train_ds = datasets.CIFAR10(args.data, train=True,  download=True, transform=eval_tf)
     test_ds  = datasets.CIFAR10(args.data, train=False, download=True, transform=eval_tf)
-    tl = DataLoader(train_ds, batch_size=512, num_workers=8, pin_memory=True)
-    el = DataLoader(test_ds,  batch_size=512, num_workers=8, pin_memory=True)
+    # 【防复发】num_workers 改 0：这台机器 8 workers 会触发 1455 共享内存错误
+    tl = DataLoader(train_ds, batch_size=512, num_workers=0, pin_memory=True)
+    el = DataLoader(test_ds,  batch_size=512, num_workers=0, pin_memory=True)
 
     X_tr, y_tr = extract_features(model, tl, device)
     X_te, y_te = extract_features(model, el, device)
@@ -48,7 +49,7 @@ def linear_eval(model: SimCLR, args, device: str) -> float:
         for i in range(0, len(perm), 256):
             idx = perm[i:i+256]
             loss = F.cross_entropy(clf(X_tr[idx]), y_tr[idx])
-            opt.zero_grad(); loss.backward(); opt.step()
+            opt.zero_grad(); loss.backward(); opt.step()   # ← 现在能跑了
         sched.step()
 
     clf.eval()
@@ -67,9 +68,9 @@ if __name__ == "__main__":
 
     device = "cuda:0"
     model = SimCLR("resnet18", "cifar10").to(device)
-    ckpt = torch.load(args.ckpt, map_location=device)
+    ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)  # 消除警告
     model.load_state_dict(ckpt["model"])
-    # 关键：冻结 encoder（这里直接整模型 eval + no_grad，且不更新其参数）
+    # 冻结 encoder：参数关梯度 + 前向只发生在 extract_features（那里有 no_grad）里
     for prm in model.parameters():
         prm.requires_grad = False
 

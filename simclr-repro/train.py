@@ -73,10 +73,14 @@ def make_loader(args, train=True, shuffle=True, ddp=False):
     tf = simclr_augment(size=32, s=args.color_s, blur=args.blur)
     ds = datasets.CIFAR10(args.data, train=train, download=True, transform=tf)
     sampler = DistributedSampler(ds, shuffle=shuffle) if ddp else None
-    return DataLoader(ds, batch_size=args.batch_size,
-                      shuffle=(sampler is None and shuffle),
-                      sampler=sampler, num_workers=args.workers,
-                      pin_memory=True, drop_last=True, persistent_workers=True), sampler
+    loader = DataLoader(ds, batch_size=args.batch_size,
+                        shuffle=(sampler is None and shuffle),
+                        sampler=sampler, num_workers=args.workers,
+                        pin_memory=True, drop_last=True,
+                        persistent_workers=(args.workers > 0))
+    return loader, sampler
+
+
 
 
 def train(args):
@@ -98,7 +102,7 @@ def train(args):
     loader, sampler = make_loader(args, ddp=ddp)
 
     params = exclude_bn_bias(raw_model)
-    if args.batch_size >= 512:
+    if args.batch_size >= 4096:
         base_lr = 0.075 * math.sqrt(args.batch_size)     # sqrt LR scaling（附录 B.1）
         opt = LARS(params, lr=base_lr, momentum=0.9)
     else:
