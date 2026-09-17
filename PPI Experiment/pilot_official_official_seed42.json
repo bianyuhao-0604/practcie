@@ -1,0 +1,36 @@
+{
+  "seed": 42,
+  "n_train": 4000,
+  "n_val": 600,
+  "n_test": 600,
+  "split_mode": "official",
+  "actual_mode": "official",
+  "pt_convention": "none",
+  "convention_evidence": {
+    "scanned": 80,
+    "d_dist": {
+      "0": 62
+    },
+    "mean_votes": {
+      "none": 62
+    }
+  },
+  "baseline": {
+    "mcc": 0.13774292451202866,
+    "auroc": 0.5849582804280791,
+    "auprc": 0.5555014920731638
+  },
+  "level3": {
+    "mcc": 0.11115142181852641,
+    "auroc": 0.5869422274623617,
+    "auprc": 0.5957737823210718
+  },
+  "emb_source": {
+    "npy": 2198,
+    "pt": 2015,
+    "fail": 39
+  },
+  "n_failed": 39,
+  "mask_frac_mean": 0.3424973487854004,
+  "mask_frac_median": 0.27250000834465027
+}
