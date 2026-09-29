@@ -1,6 +1,6 @@
-"""L0 数据层 + L2 质量过滤 + FeatureStore 读取端 + figshare→csv 转换 CLI。
+"""L0 数据层 + L2 质量过滤 + FeatureStore 读取端 + 原始文件→csv CLI。
 补丁：P7(蛋白不相交断言)、B3(时间截断)、P0-4(读取端布局)。
-自查修正：蛋白级特征按侧独立收集（此前版本误共享 A 侧）。"""
+N1 修正涉及本文件的下游：collate 输出不变，形状问题在 engine 侧统一 squeeze。"""
 import argparse, json, os, random
 import numpy as np
 import pandas as pd
@@ -121,7 +121,7 @@ def make_collate(store):
             d["len"] = np.minimum(np.asarray(Ls), Lmax).astype(int)
             d["iface_raw"] = iface
             d["plddt"] = plddt
-            # 蛋白级特征：per-side 独立收集（自查修正点）
+            # 蛋白级特征：per-side 独立收集
             tx = np.zeros((B, 128), np.float32)
             ge = np.zeros((B, 256), np.float32)
             tm = np.zeros(B, np.float32)
@@ -163,7 +163,7 @@ def make_collate(store):
     return collate
 
 class BucketSampler(torch.utils.data.Sampler):
-    """按 max(La,Lb) 排序分桶 → 桶内成批 → 每 epoch 打乱批序（省 padding 算力；确定性可复现）。"""
+    """按 max(La,Lb) 排序分桶 → 桶内成批 → 每 epoch 打乱批序（确定性可复现）。"""
     def __init__(self, ds, store, bs, seed, frac=1.0):
         n = len(ds)
         take = int(n * frac) if frac < 1.0 else n

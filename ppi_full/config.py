@@ -1,4 +1,4 @@
-"""全局配置（v2.2-Final）。审计补丁：B5(负采样表述)、D1(超参完整化)、cfg 序列化(供 mc-eval 重建)。"""
+"""全局配置（v2.3）。默认超参按 8GB 显存笔电校准；24GB+ 卡用 --bs 64 --lr 1e-4 提回。"""
 from dataclasses import dataclass, field, replace, asdict
 import json, os
 
@@ -42,7 +42,7 @@ class ModelCfg:
     dropout: float = 0.2
     beta_init: float = 0.0
     iface_tau: float = 0.5
-    # ---- L4 组件消融 (模块7 Layer B) ----
+    # ---- L4 组件消融 ----
     bidirectional: bool = True        # False → L4-unidirectional
     iface_bias: bool = True           # False → L4-no-iface-bias
     siface_out: bool = True           # False → L4-no-siface
@@ -53,31 +53,32 @@ class ModelCfg:
     global_path: bool = True          # False → L4-no-global-path
     seq_proj_pos: str = "late"        # "early" → L4-proj-seq-early
     zero_seq: bool = False            # True → No-Seq 反向消融
-    # ---- L5 消融 (Layer C) ----
+    # ---- L5 消融 ----
     l5_no_asym: bool = False
     l5_siface: bool = True
-    l5_plain_mlp: bool = False
+    l5_plain_mlp: bool = False        # plain/blocks 双模块常驻构造（N4）：切换时参数量守恒
     l5_concat_asym: bool = False
 
 @dataclass
 class TrainCfg:
-    lr: float = 1e-4
+    # 8GB 笔电默认；A100/4090 建议 bs=64, lr=1e-4, num_workers=4
+    lr: float = 5e-5
     wd: float = 1e-6
-    bs: int = 64
+    bs: int = 16
     max_epochs: int = 50
     patience: int = 8
     warmup_frac: float = 0.05
     clip: float = 1.0
     label_smooth: float = 0.05
-    mixup_prob: float = 0.0           # 默认关；超参搜索时调
+    mixup_prob: float = 0.0           # 默认关；搜索时调
     mixup_alpha: float = 0.2
     rdrop_alpha: float = 1.0
     rdrop_sym: bool = True
     seed: int = 42
     bf16: bool = True
-    num_workers: int = 4              # Windows 若 memmap 报错请设 0
+    num_workers: int = 2              # Windows memmap 冲突时改 0
     train_subset_frac: float = 1.0
-    date_col: str = ""                # B3: 时间截断（仅作用于 train）
+    date_col: str = ""                # 时间截断（仅作用于 train）
     cutoff: str = ""
 
 def _sw(**kw):
@@ -85,8 +86,7 @@ def _sw(**kw):
     base.update(kw)
     return Switches(**base)
 
-# R 阶梯（模块2）：逐级只多开一个开关；B5 更正——负采样=Bernett 原生（node-degree 平衡），
-# ILP hard negatives 为二期扩展，不在本实现内。
+# R 阶梯：逐级只多开一个开关；负采样=Bernett 原生（度平衡）；ILP hard negatives 为二期扩展
 R_LEVELS = {
     "R0": dict(kind="reim", use_ssl=False, sw=_sw()),
     "R1": dict(kind="l4",   use_ssl=False, sw=_sw()),
@@ -98,7 +98,6 @@ R_LEVELS = {
     "R7": dict(kind="l4",   use_ssl=True,  sw=_sw(struct=1, iface=1, surf=1, text=1, genome=1)),
 }
 
-# 消融注册表（模块7）：默认叠在 R7(FULL) 上；"train__x" 前缀覆盖 TrainCfg，其余覆盖 ModelCfg
 ABLATIONS = {
     "L4-unidirectional":      dict(bidirectional=False),
     "L4-no-iface-bias":       dict(iface_bias=False),
