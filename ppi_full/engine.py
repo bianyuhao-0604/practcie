@@ -125,6 +125,7 @@ def train_one_run(level, seed, mcfg, tcfg, paths, tag=None, adapter_ckpt=None):
     rdrop_a = 0.0 if is_reim else tcfg.rdrop_alpha
     ls_eps = 0.0 if is_reim else tcfg.label_smooth
 
+    os.makedirs(os.path.join(paths.out_dir, tag, f"seed{seed}"), exist_ok=True)
     save_json({"model": json.loads(json.dumps(mcfg, default=lambda o: getattr(o, "__dict__", str(o)))),
                "level": level, "tag": tag, "seed": seed},
               os.path.join(paths.out_dir, tag, f"seed{seed}", "cfg.json"))
@@ -153,7 +154,7 @@ def train_one_run(level, seed, mcfg, tcfg, paths, tag=None, adapter_ckpt=None):
             with torch.autocast("cuda", torch.bfloat16, enabled=tcfg.bf16 and device == "cuda"):
                 out1 = model(batch, y=y_sm, mix_pair=mix_pair)
                 t1 = out1["y_mix"] if out1["y_mix"] is not None else y_sm
-                loss = F.binary_cross_entropy_with_logits(out1["logits"].float(), t1)
+                loss = F.binary_cross_entropy_with_logits(out1["logits"].float().squeeze(-1), t1)
                 if rdrop_a > 0:
                     out2 = model(batch, y=y_sm, mix_pair=mix_pair)
                     t2 = out2["y_mix"] if out2["y_mix"] is not None else y_sm
@@ -161,7 +162,7 @@ def train_one_run(level, seed, mcfg, tcfg, paths, tag=None, adapter_ckpt=None):
                     p2 = torch.sigmoid(out2["logits"].float())
                     kl = 0.5 * (bern_kl(p1, p2) + bern_kl(p2, p1)) if tcfg.rdrop_sym \
                         else bern_kl(p1, p2)
-                    loss = 0.5 * (loss + F.binary_cross_entropy_with_logits(out2["logits"].float(), t2)) \
+                    loss = 0.5 * (loss + F.binary_cross_entropy_with_logits(out2["logits"].float().squeeze(-1), t2)) \
                         + rdrop_a * kl.mean()             # D2：KL 权重=α
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), tcfg.clip)

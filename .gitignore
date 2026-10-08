@@ -176,4 +176,8 @@ l3_ppi/data/raw/
 !autoencoder/results_classic/*.png
 !autoencoder/results_compare/*.png
 !autoencoder/results_conv/*.png
-!autoencoder/results_full/*.png
+!autoencoder/results_full/*.pngapp.db*
+cache.pki
+db.dat
+db.dir
+events.jsonl

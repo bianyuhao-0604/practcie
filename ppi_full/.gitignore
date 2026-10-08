@@ -1,0 +1,5 @@
+logs/
+workdir/
+__pycache__/
+*.npz
+*.npy

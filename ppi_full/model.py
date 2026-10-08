@@ -249,7 +249,7 @@ class Reim2D(nn.Module):
             keep = (~A["pad"][i:i + self.chunk])[:, :, None] & (~B["pad"][i:i + self.chunk])[:, None, :]
             m = m.masked_fill(~keep, -1e4)
             logits.append(m.amax(dim=(1, 2)))
-        return torch.stack(logits)[:, None], None         # [B,1]
+        return torch.cat(logits, dim=0)[:, None], None         # [B,1]
 
 class PPIModel(nn.Module):
     def __init__(self, mcfg: ModelCfg, adapter_ckpt=None, strict_adapter=True):

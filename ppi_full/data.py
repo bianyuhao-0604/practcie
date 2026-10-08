@@ -48,6 +48,9 @@ def validate_splits(splits):
                                f"'{names[j]}': {len(inter)}, e.g. {inter[:5]}")
     return True
 
+import functools
+
+
 class FeatureStore:
     def __init__(self, feat_dir):
         self.dir = feat_dir
@@ -61,7 +64,11 @@ class FeatureStore:
 
         def _mm(name, shape):
             p = os.path.join(feat_dir, name + ".npy")
-            return np.memmap(p, dtype=np.float16, mode="r", shape=shape) if os.path.exists(p) else None
+            if not os.path.exists(p):
+                return None
+            m = np.load(p, mmap_mode="r")
+            assert tuple(m.shape) == tuple(shape), f"{name}.npy {tuple(m.shape)} != {tuple(shape)}"
+            return m
 
         self.seq = _mm("seq", (self.n, MAX_LEN, 1280))
         self.str = _mm("str", (self.n, MAX_LEN, 1024))
@@ -89,7 +96,17 @@ class PairDataset(torch.utils.data.Dataset):
     def __getitem__(self, i):
         return int(self.ia[i]), int(self.ib[i]), float(self.y[i])
 
-def make_collate(store):
+_WORKER_STORE = None
+
+
+def _collate_dispatch(feat_dir, items):
+    global _WORKER_STORE
+    if _WORKER_STORE is None or _WORKER_STORE.dir != feat_dir:
+        _WORKER_STORE = FeatureStore(feat_dir)
+    return make_collate(_WORKER_STORE, _raw=True)(items)
+
+
+def make_collate(store, _raw=False):
     def collate(items):
         ias = [it[0] for it in items]
         ibs = [it[1] for it in items]
@@ -104,6 +121,11 @@ def make_collate(store):
             d = {}
             for k in ("seq", "str", "surf"):
                 src = getattr(store, k)
+                if src is None:
+                    if k == "seq":
+                        raise FileNotFoundError("seq.npy missing in " + store.dir + " - run build_seq_store.py")
+                    d[k] = np.zeros((B, Lmax, {"str": 1024, "surf": 80}[k]), np.float32)
+                    continue
                 D = src.shape[-1]
                 arr = np.zeros((B, Lmax, D), np.float32)
                 for jj, (ix, L) in enumerate(zip(idxs, Ls)):
@@ -116,7 +138,8 @@ def make_collate(store):
             for jj, (ix, L) in enumerate(zip(idxs, Ls)):
                 Lc = min(int(L), Lmax)
                 if Lc > 0:
-                    iface[jj, :Lc] = np.asarray(store.iface[ix, :Lc], np.float32)
+                    if store.iface is not None:
+                        iface[jj, :Lc] = np.asarray(store.iface[ix, :Lc], np.float32)
                     plddt[jj, :Lc] = np.asarray(store.plddt[ix, :Lc], np.float32)
             d["len"] = np.minimum(np.asarray(Ls), Lmax).astype(int)
             d["iface_raw"] = iface
@@ -160,7 +183,9 @@ def make_collate(store):
             }
 
         return {"A": pack(A), "B": pack(Bd), "y": torch.tensor(ys, dtype=torch.float32)}
-    return collate
+    if _raw:
+        return collate
+    return functools.partial(_collate_dispatch, store.dir)
 
 class BucketSampler(torch.utils.data.Sampler):
     """按 max(La,Lb) 排序分桶 → 桶内成批 → 每 epoch 打乱批序（确定性可复现）。"""

@@ -24,7 +24,7 @@ class StoreWriter:
                 os.path.join(feat_dir, k + ".npy"), mode="w+", dtype=np.float16, shape=shape)
         for k, dim in PROT_LAYOUT.items():
             self.arrs[k] = np.lib.format.open_memmap(
-                os.path.join(feat_dir, k + ".npy"), mode="w+", dtype=np.float16, shape=(self.n, dim))
+                os.path.join(feat_dir, k + ".npy"), mode="w+", dtype=np.float16, shape=(self.n, *dim))
 
     def write(self, pid, length, plddt=None, **feat):
         i = self.pid2idx[pid]
