@@ -125,7 +125,9 @@ def train_one_run(level, seed, mcfg, tcfg, paths, tag=None, adapter_ckpt=None):
     rdrop_a = 0.0 if is_reim else tcfg.rdrop_alpha
     ls_eps = 0.0 if is_reim else tcfg.label_smooth
 
-    os.makedirs(os.path.join(paths.out_dir, tag, f"seed{seed}"), exist_ok=True)
+    run_dir = os.path.join(paths.out_dir, tag, f"seed{seed}")
+    os.makedirs(run_dir, exist_ok=True)
+
     save_json({"model": json.loads(json.dumps(mcfg, default=lambda o: getattr(o, "__dict__", str(o)))),
                "level": level, "tag": tag, "seed": seed},
               os.path.join(paths.out_dir, tag, f"seed{seed}", "cfg.json"))
@@ -177,6 +179,9 @@ def train_one_run(level, seed, mcfg, tcfg, paths, tag=None, adapter_ckpt=None):
             best_val, best_ep, bad = val_auprc, ep, 0
             best_state = copy.deepcopy(model.state_dict())
             mark = " *"
+            torch.save({"best_ep": best_ep, "val_auprc": best_val,
+                        "state_dict": model.state_dict()},
+                       os.path.join(run_dir, "best_ckpt.pt"))   # 纯 I/O
         else:
             bad += 1
         print(f"[{tag}/seed{seed}] ep{ep:02d} loss={tot / max(nb, 1):.4f} "
